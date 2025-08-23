@@ -1,0 +1,93 @@
+# Telegram канал модулей: https://t.me/modulesTheHika
+# Создатель: @vipqlkxn
+
+from hikka import loader, utils
+from telethon.tl.functions.messages import SendMessageRequest
+from telethon.tl.functions.contacts import ResolveUsernameRequest
+import asyncio
+
+@loader.tds
+class GsazilInfoMod(loader.Module):
+    """Получение информации через @Gsazilbot"""
+    strings = {"name": "GsazilInfo"}
+
+    async def client_ready(self, client, db):
+        self._client = client
+        self._db = db
+
+    @loader.command(alias="infg")
+    async def gsazilinfocmd(self, message):
+        """Получить информацию о пользователе через @Gsazilbot - .infg"""
+        args = utils.get_args_raw(message)
+        
+        if not args:
+            await utils.answer(message, "❌ Укажите username или ID пользователя\nПример: `.infg @username` или `.infg 123456789`")
+            return
+
+        try:
+            # Получаем entity пользователя/чата
+            if args.startswith("@"):
+                entity = await self._client(ResolveUsernameRequest(args[1:]))
+                target_id = entity.peer.user_id
+            else:
+                target = await self._client.get_entity(int(args))
+                target_id = target.id
+
+            # Отправляем запрос боту @Gsazilbot
+            bot_entity = await self._client(ResolveUsernameRequest("Gsazilbot"))
+            bot_input = await self._client.get_input_entity(bot_entity.peer)
+
+            # Отправляем ТОЛЬКО ID без команды /info
+            await self._client(SendMessageRequest(
+                peer=bot_input,
+                message=f"{target_id}",
+                no_webpage=True
+            ))
+
+            # Ждем ответа от бота
+            await asyncio.sleep(3)
+            async for msg in self._client.iter_messages(bot_input, limit=1):
+                if msg.out:
+                    continue
+                # Показываем только чистый ответ без упоминания бота
+                await utils.answer(message, f"{msg.text}")
+                return
+
+            await utils.answer(message, "❌ Бот не ответил")
+
+        except Exception as e:
+            await utils.answer(message, f"❌ Ошибка: {str(e)}")
+
+    @loader.command(alias="tginf")
+    async def gsazilreplycmd(self, message):
+        """Получить информацию о реплайнутом пользователе - .tginf"""
+        reply = await message.get_reply_message()
+        
+        if not reply:
+            await utils.answer(message, "❌ Ответьте на сообщение пользователя")
+            return
+
+        try:
+            target = await reply.get_sender()
+            bot_entity = await self._client(ResolveUsernameRequest("Gsazilbot"))
+            bot_input = await self._client.get_input_entity(bot_entity.peer)
+
+            # Отправляем ТОЛЬКО ID без команды /info
+            await self._client(SendMessageRequest(
+                peer=bot_input,
+                message=f"{target.id}",
+                no_webpage=True
+            ))
+
+            await asyncio.sleep(3)
+            async for msg in self._client.iter_messages(bot_input, limit=1):
+                if msg.out:
+                    continue
+                # Показываем только чистый ответ без упоминания бота
+                await utils.answer(message, f"{msg.text}")
+                return
+
+            await utils.answer(message, "❌ Бот не ответил")
+
+        except Exception as e:
+            await utils.answer(message, f"❌ Ошибка: {str(e)}")

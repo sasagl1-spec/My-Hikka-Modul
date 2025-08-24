@@ -278,26 +278,32 @@ class SelectiveRPMod(loader.Module):
         await message.edit(response)
     
     async def rptogglecmd(self, message: Message):
-        """Включить/выключить: .rptoggle <on/off>"""
-        args = utils.get_args_raw(message).lower()
-        if args == "on":
-            self.settings["enabled"] = True
-            await message.edit("✅ РП команды включены")
-        elif args == "off":
-            self.settings["enabled"] = False
-            await message.edit("❌ РП команды выключены")
-        else:
-            status = "включены" if self.settings["enabled"] else "выключены"
-            await m            r"(?i)(люблю|love|обожаю)": ["💖 И я тебя!", "😍 Взаимно!", "💘 Люблю!"],
-                r"(?i)(спам|spam|флуд)": ["🚫 Нет спаму!", "⛔ Стоп флуд!", "🔇 Тише!"],
-}  # ← Эта скобка закрывает словарь commands
-self.cooldowns = {}
-self.user_cooldowns = {}
-self.allowed_chats = set()
-        
-    async def client_ready(self, client, db):
-        self._db = db
-        self._client = client
+    """Включить/выключить: .rptoggle <on/off>"""
+    args = utils.get_args_raw(message).lower()
+    if args == "on":
+        self.settings["enabled"] = True
+        await message.edit("✅ РП команды включены")
+    elif args == "off":
+        self.settings["enabled"] = False
+        await message.edit("❌ РП команды выключены")
+    else:
+        status = "включены" if self.settings["enabled"] else "выключены"
+        await message.edit(f"📊 РП команды: {status}\nИспользуй: .rptoggle on/off")
+    
+    self._db.set("MegaStrictRPMod", "settings", self.settings)
+
+# Словарь commands должен быть в методе __init__ выше!
+# Эти строки нужно перенести в правильное место:
+# r"(?i)(люблю|love|обожаю)": ["💖 И я тебя!", "😍 Взаимно!", "💘 Люблю!"],
+# r"(?i)(спам|spam|флуд)": ["🚫 Нет спаму!", "⛔ Стоп флуд!", "🔇 Тише!"],
+# }  # ← Эта скобка закрывает словарь commands
+# self.cooldowns = {}
+# self.user_cooldowns = {}
+# self.allowed_chats = set()
+
+async def client_ready(self, client, db):
+    self._db = db
+    self._client = client
         self.settings = self._db.get("SpecificChatRP", "settings", {
             "global_cooldown": 5,
             "user_cooldown": 15,

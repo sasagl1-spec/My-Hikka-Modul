@@ -291,6 +291,18 @@ class SelectiveRPMod(loader.Module):
         await message.edit(f"📊 РП команды: {status}\nИспользуй: .rptoggle on/off")
     
     self._db.set("MegaStrictRPMod", "settings", self.settings)
+    args = utils.get_args_raw(message).lower()
+    if args == "on":
+        self.settings["enabled"] = True
+        await message.edit("✅ РП команды включены")
+    elif args == "off":
+        self.settings["enabled"] = False
+        await message.edit("❌ РП команды выключены")
+    else:
+        status = "включены" if self.settings["enabled"] else "выключены"
+        await message.edit(f"📊 РП команды: {status}\nИспользуй: .rptoggle on/off")
+    
+    self._db.set("MegaStrictRPMod", "settings", self.settings)
 
 # Словарь commands должен быть в методе __init__ выше!
 # Эти строки нужно перенести в правильное место:

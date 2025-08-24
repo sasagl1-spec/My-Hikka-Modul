@@ -2,7 +2,6 @@ from hikka import loader, utils
 from telethon.tl.types import Message
 import random
 import time
-import re
 
 @loader.tds
 class SelectiveRPMod(loader.Module):
@@ -111,6 +110,184 @@ class SelectiveRPMod(loader.Module):
             "ушатать": ["👊 {sender} ушатывает {target}", "🥊 {sender} избивает {target}"],
             "избить": ["🤜 {sender} избивает {target}", "💥 {sender} наносит побои {target}"],
             "порвать": ["✂️ {sender} рвет {target}", "💢 {sender} разрывает на части {target}"],
+            "разорвать": ["🔪 {sender} разрывает {target}", "⚔️ {sender} раздирает на куски {target}"],
+            "отрубить": ["🪓 {sender} отрубает голову {target}", "⚔️ {sender} рубит {target}"],
+            "рубить": ["🔪 {sender} рубит {target}", "🗡️ {sender} разрубает пополам {target}"],
+            "отстрелить": ["🔫 {sender} отстреливает {target}", "🎯 {sender} подстреливает {target}"],
+            "подстрелить": ["🏹 {sender} подстреливает {target}", "🎯 {sender} попадает в {target}"],
+            "выкопать": ["⛏️ {sender} выкапывает {target}", "🕳️ {sender} роет яму для {target}"],
+            "копать": ["🧹 {sender} копает могилу для {target}", "🪦 {sender} готовит захоронение {target}"],
+            "выпороть": ["📏 {sender} порет {target}", "👋 {sender} наказывает поркой {target}"],
+            "пороть": ["🪠 {sender} порет {target}", "⚡ {sender} дает ремня {target}"],
+            "закопать": ["⚰️ {sender} закапывает {target}", "🪦 {sender} хоронит заживо {target}"],
+            "захоронить": ["🧟 {sender} хоронит {target}", "⚰️ {sender} предает земле {target}"],
+            "выпить": ["🍷 {sender} пьет с {target}", "🍻 {sender} выпивает за здоровье {target}"],
+            "пить": ["🥂 {sender} пьет вместе с {target}", "🍺 {sender} предлагает выпить {target}"],
+            "наказать": ["⚖️ {sender} наказывает {target}", "📝 {sender} выносит приговор {target}"],
+            "наказание": ["🔨 {sender} наказывает {target}", "⚒️ {sender} подвергает наказанию {target}"],
+            "предложить": ["💍 {sender} делает предложение {target}", "🎁 {sender} предлагает {target}"],
+            "предложение": ["💎 {sender} делает предложение {target}", "💍 {sender} предлагает руку и сердце {target}"],
+            "пожелать": ["🌟 {sender} желает добра {target}", "✨ {sender} отправляет пожелания {target}"],
+            "желать": ["🌈 {sender} желает удачи {target}", "🎯 {sender} желает успехов {target}"],
+
+            # === ДЛЯ ВЛЮБЛЁННЫХ ===
+            "сделать подарок": ["🎁 {sender} дарит подарок {target}", "🎀 {sender} преподносит подарок {target}"],
+            "подарить": ["🎁 {sender} дарит {target}", "💝 {sender} делает подарок {target}"],
+            "устроить сюрприз": ["🎉 {sender} устраивает сюрприз для {target}", "🎊 {sender} готовит сюрприз {target}"],
+            "сюрприз": ["🎁 {sender} готовит сюрприз {target}", "🎪 {sender} устраивает неожиданность {target}"],
+            "пригласить в клуб": ["🎵 {sender} зовет в клуб {target}", "🎶 {sender} приглашает на танцы {target}"],
+            "клуб": ["🕺 {sender} зовет в клуб {target}", "💃 {sender} приглашает потанцевать {target}"],
+            "поговорить по душам": ["💬 {sender} говорит по душам с {target}", "❤️ {sender} открывает душу {target}"],
+            "душевный разговор": ["🗣️ {sender} ведет душевный разговор с {target}", "💭 {sender} делится сокровенным {target}"],
+            "сходить в кино": ["🎬 {sender} идет в кино с {target}", "🍿 {sender} приглашает в кинотеатр {target}"],
+            "кино": ["📽️ {sender} предлагает сходить в кино с {target}", "🎞️ {sender} зовет на фильм {target}"],
+            "подарить конфеты": ["🍬 {sender} дарит конфеты {target}", "🍫 {sender} угощает сладостями {target}"],
+            "конфеты": ["🍭 {sender} дарит конфеты {target}", "🍬 {sender} угощает вкусняшками {target}"],
+            "сделать завтрак": ["🍳 {sender} готовит завтрак для {target}", "🥞 {sender} кормит завтраком {target}"],
+            "завтрак": ["☕ {sender} готовит завтрак {target}", "🍳 {sender} угощает утренней едой {target}"],
+            "пригласить погулять": ["🚶 {sender} зовет на прогулку {target}", "🌳 {sender} приглашает погулять {target}"],
+            "прогулка": ["🌄 {sender} предлагает прогулку {target}", "🚶‍♂️ {sender} зовет пройтись {target}"],
+            "подарить шоколадку": ["🍫 {sender} дарит шоколадку {target}", "🎂 {sender} угощает шоколадом {target}"],
+            "шоколад": ["🍫 {sender} дарит шоколад {target}", "🍫 {sender} угощает сладким {target}"],
+            "кинуть мем": ["📱 {sender} кидает мем {target}", "😆 {sender} отправляет смешной мем {target}"],
+            "мем": ["😂 {sender} отправляет мем {target}", "📲 {sender} делится мемом с {target}"],
+            "поделиться едой": ["🍕 {sender} делится едой с {target}", "🍔 {sender} угощает {target}"],
+            "угостить": ["🍎 {sender} угощает {target}", "🍖 {sender} делится едой с {target}"],
+            "рассказать анекдот": ["🎭 {sender} рассказывает анекдот {target}", "😂 {sender} смешит анекдотом {target}"],
+            "анекдот": ["📜 {sender} рассказывает анекдот {target}", "😄 {sender} веселит шуткой {target}"],
+            "сделать комплимент": ["🌹 {sender} делает комплимент {target}", "💐 {sender} хвалит {target}"],
+            "комплимент": ["🌟 {sender} делает комплимент {target}", "✨ {sender} говорит приятное {target}"],
+        }
+        self.cooldowns = {}
+        self.enabled_chats = set()
+        
+    async def client_ready(self, client, db):
+        self._db = db
+        self._client = client
+        self.settings = self._db.get("SelectiveRPMod", "settings", {
+            "cooldown": 3,
+            "enabled": True
+        })
+        self.enabled_chats = set(self._db.get("SelectiveRPMod", "enabled_chats", []))
+    
+    async def rpaddchatcmd(self, message: Message):
+        """Добавить чат в разрешенные: .rpaddchat"""
+        chat_id = message.chat_id
+        if chat_id in self.enabled_chats:
+            await message.edit("✅ Этот чат уже в списке разрешенных")
+            return
+        
+        self.enabled_chats.add(chat_id)
+        self._db.set("SelectiveRPMod", "enabled_chats", list(self.enabled_chats))
+        await message.edit("✅ Чат добавлен в разрешенные для РП команд")
+
+    async def rpremovechatcmd(self, message: Message):
+        """Удалить чат из разрешенных: .rpremovechat"""
+        chat_id = message.chat_id
+        if chat_id not in self.enabled_chats:
+            await message.edit("❌ Этот чат не в списке разрешенных")
+            return
+        
+        self.enabled_chats.remove(chat_id)
+        self._db.set("SelectiveRPMod", "enabled_chats", list(self.enabled_chats))
+        await message.edit("✅ Чат удален из разрешенных")
+
+    async def rplistchatscmd(self, message: Message):
+        """Список разрешенных чатов: .rplistchats"""
+        if not self.enabled_chats:
+            await message.edit("📋 Список разрешенных чатов пуст")
+            return
+        
+        response = "📋 Разрешенные чаты для РП:\n\n"
+        for chat_id in self.enabled_chats:
+            try:
+                chat = await self._client.get_entity(chat_id)
+                title = getattr(chat, 'title', f'Чат {chat_id}')
+                response += f"• {title} (ID: {chat_id})\n"
+            except:
+                response += f"• Unknown chat (ID: {chat_id})\n"
+        
+        await message.edit(response)
+
+    async def watcher(self, message: Message):
+        """Обработчик сообщений только в разрешенных чатах"""
+        if not self.settings["enabled"] or not message.text or message.out:
+            return
+        
+        # Проверяем разрешен ли чат
+        chat_id = message.chat_id
+        if chat_id not in self.enabled_chats:
+            return
+        
+        current_time = time.time()
+        user_id = message.sender_id
+        
+        # Проверка кулдауна
+        if user_id in self.cooldowns and current_time - self.cooldowns[user_id] < self.settings["cooldown"]:
+            return
+        
+        text = message.text.lower().strip()
+        
+        # Ищем точное совпадение с командами
+        if text in self.commands:
+            response = random.choice(self.commands[text])
+            
+            # Замена плейсхолдеров
+            sender_name = await self.get_user_name(user_id)
+            
+            # Если есть reply, используем его как target
+            if message.is_reply:
+                try:
+                    reply = await message.get_reply_message()
+                    target_user = await self._client.get_entity(reply.sender_id)
+                    target_name = target_user.first_name or f"user_{reply.sender_id}"
+                except:
+                    target_name = "всех"
+            else:
+                target_name = "всех"
+            
+            response = response.format(sender=sender_name, target=target_name)
+            await message.reply(response)
+            self.cooldowns[user_id] = current_time
+    
+    async def get_user_name(self, user_id: int):
+        """Получение имени пользователя"""
+        try:
+            user = await self._client.get_entity(user_id)
+            return user.first_name or f"user_{user_id}"
+        except:
+            return f"user_{user_id}"
+    
+    async def rpcmd(self, message: Message):
+        """Список команд: .rp"""
+        categories = {
+            "Основные РП": list(self.commands.keys())[:70],
+            "ВИП команды": list(self.commands.keys())[70:120],
+            "Для влюбленных": list(self.commands.keys())[120:]
+        }
+        
+        response = "🎭 Категории РП команд:\n\n"
+        for category, commands in categories.items():
+            response += f"🔹 {category}: {len(commands)} команд\n"
+        
+        response += f"\n📝 Просто напиши команду в чат\n"
+        response += f"⏱️ Кулдаун: {self.settings['cooldown']}сек\n"
+        response += f"🔢 Всего команд: {len(self.commands)}"
+        
+        await message.edit(response)
+    
+    async def rptogglecmd(self, message: Message):
+        """Включить/выключить: .rptoggle <on/off>"""
+        args = utils.get_args_raw(message).lower()
+        if args == "on":
+            self.settings["enabled"] = True
+            await message.edit("✅ РП команды включены")
+        elif args == "off":
+            self.settings["enabled"] = False
+            await message.edit("❌ РП команды выключены")
+        else:
+            status = "включены" if self.settings["enabled"] else "выключены"
+            await message.edit            "порвать": ["✂️ {sender} рвет {target}", "💢 {sender} разрывает на части {target}"],
             "разорвать": ["🔪 {sender} разрывает {target}", "⚔️ {sender} раздирает на куски {target}"],
             "отрубить": ["🪓 {sender} отрубает голову {target}", "⚔️ {sender} рубит {target}"],
             "рубить": ["🔪 {sender} рубит {target}", "🗡️ {sender} разрубает пополам {target}"],

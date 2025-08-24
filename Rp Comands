@@ -289,11 +289,11 @@ class SelectiveRPMod(loader.Module):
         else:
             status = "включены" if self.settings["enabled"] else "выключены"
             await m            r"(?i)(люблю|love|обожаю)": ["💖 И я тебя!", "😍 Взаимно!", "💘 Люблю!"],
-            r"(?i)(спам|spam|флуд)": ["🚫 Нет спаму!", "⛔ Стоп флуд!", "🔇 Тише!"],
-        }
-        self.cooldowns = {}
-        self.user_cooldowns = {}
-        self.allowed_chats = set()
+                r"(?i)(спам|spam|флуд)": ["🚫 Нет спаму!", "⛔ Стоп флуд!", "🔇 Тише!"],
+}  # ← Эта скобка закрывает словарь commands
+self.cooldowns = {}
+self.user_cooldowns = {}
+self.allowed_chats = set()
         
     async def client_ready(self, client, db):
         self._db = db

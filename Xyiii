@@ -1,0 +1,351 @@
+# Модуль AutoMessage для Hikka UserBot
+# Автоматическая отправка сообщений с выбором шрифта и цитированием
+# ТОЛЬКО для образовательных целей в ваших чатах
+# @hikaribot
+
+from .. import loader, utils
+import asyncio
+import random
+import logging
+from datetime import datetime
+
+logger = logging.getLogger(__name__)
+
+@loader.tds
+class AutoMessageMod(loader.Module):
+    """Авто-сообщения с шрифтами и цитированием"""
+    
+    strings = {
+        "name": "AutoMessage",
+        "started": "✅ <b>Авто-сообщения запущены в этом чате</b>\n📝 Текст: <code>{text}</code>\n🕓 Задержка: {min}-{max} мин\n🔄 Количество: {count}\n🎨 Шрифт: {font}\n📌 Цитата: {quote}",
+        "stopped": "❌ <b>Авто-сообщения остановлены</b>",
+        "status": "📊 <b>Статус авто-сообщений:</b>\n{status}",
+        "no_active": "⚠️ <b>В этом чате нет активных авто-сообщений</b>",
+        "stats": "📈 <b>Статистика:</b>\nОтправлено: {sent}\nОсталось: {remaining}\nСледующее через: ~{next_minutes} мин",
+        "list": "📋 <b>Активные авто-сообщения:</b>\n{list}"
+    }
+    
+    # Словарь шрифтов Telegram
+    FONTS = {
+        "обычный": "",  # Без изменений
+        "жирный": "**",  # **жирный**
+        "курсив": "__",  # __курсив__
+        "моно": "`",    # `моноширинный`
+        "жирный+курсив": "**__",  # **__жирный курсив__**
+        "зачеркнутый": "~~",  # ~~зачеркнутый~~
+        "спойлер": "||",  # ||спойлер||
+        "ссылка": "[текст](ссылка)",  # Шаблон для ссылок
+        "код": "```\nкод\n```"  # Блок кода
+    }
+    
+    def __init__(self):
+        self.active_tasks = {}  # {chat_id: {task, text, min_delay, max_delay, count, font, quote}}
+        self.stats = {}  # Статистика по чатам
+        self.message_counters = {}  # Счетчики отправленных сообщений
+    
+    async def client_ready(self, client, db):
+        self.client = client
+        self.db = db
+        logger.info("AutoMessage загружен")
+    
+    @loader.command(ru_doc="Запустить авто-сообщения в этом чате")
+    async def rasscmd(self, message):
+        """[мин_задержка] [макс_задержка] [количество] [шрифт] [цитата?] <текст> - Запустить авто-сообщения"""
+        
+        # Получаем аргументы
+        args = utils.get_args_raw(message)
+        if not args:
+            await utils.answer(message, self._get_help())
+            return
+        
+        # Парсим аргументы
+        parts = args.split(" ", 4)
+        
+        if len(parts) < 4:
+            await utils.answer(message, self._get_help())
+            return
+        
+        try:
+            min_delay = int(parts[0])  # Минимальная задержка в минутах
+            max_delay = int(parts[1])  # Максимальная задержка в минутах
+            count = int(parts[2])      # Количество сообщений
+            font_name = parts[3].lower()  # Название шрифта
+            text = parts[4] if len(parts) > 4 else "Тестовое сообщение"
+            
+            # Проверка задержки
+            if min_delay < 1 or max_delay < min_delay:
+                await utils.answer(message, "⚠️ <b>Неверная задержка</b>\nМинимум: 1 минута\nМаксимум > минимума")
+                return
+            
+            if count < 1:
+                await utils.answer(message, "⚠️ <b>Количество должно быть больше 0</b>")
+                return
+            
+            # Проверяем шрифт
+            if font_name not in self.FONTS:
+                fonts_list = ", ".join(self.FONTS.keys())
+                await utils.answer(message, f"⚠️ <b>Неизвестный шрифт</b>\nДоступные: {fonts_list}")
+                return
+            
+            # Определяем режим цитирования
+            quote_mode = "реплай" if message.is_reply else "нет"
+            
+            # Получаем chat_id
+            chat_id = message.chat_id
+            
+            # Останавливаем предыдущую задачу в этом чате, если есть
+            await self._stop_in_chat(chat_id)
+            
+            # Запускаем новую задачу
+            task = asyncio.create_task(
+                self._send_messages_loop(chat_id, text, min_delay, max_delay, count, font_name, quote_mode, message)
+            )
+            
+            # Сохраняем задачу
+            self.active_tasks[chat_id] = {
+                "task": task,
+                "text": text,
+                "min_delay": min_delay,
+                "max_delay": max_delay,
+                "total_count": count,
+                "font": font_name,
+                "quote": quote_mode,
+                "start_time": datetime.now()
+            }
+            
+            # Инициализируем статистику
+            self.stats[chat_id] = {"sent": 0, "total": count}
+            self.message_counters[chat_id] = 0
+            
+            # Форматируем текст согласно шрифту
+            formatted_text = self._apply_font(text, font_name)
+            
+            # Отправляем подтверждение
+            response = self.strings("started").format(
+                text=text[:50] + "..." if len(text) > 50 else text,
+                min=min_delay,
+                max=max_delay,
+                count=count,
+                font=font_name,
+                quote=quote_mode
+            )
+            
+            await utils.answer(message, response)
+            logger.info(f"AutoMessage запущен в чате {chat_id}")
+            
+        except ValueError as e:
+            await utils.answer(message, f"⚠️ <b>Ошибка в аргументах:</b>\n{str(e)}")
+        except Exception as e:
+            await utils.answer(message, f"❌ <b>Ошибка:</b> {str(e)}")
+            logger.error(f"Ошибка в rasscmd: {e}")
+    
+    @loader.command(ru_doc="Остановить авто-сообщения в этом чате")
+    async def rassstopcmd(self, message):
+        """- Остановить авто-сообщения в этом чате"""
+        chat_id = message.chat_id
+        
+        if chat_id in self.active_tasks:
+            await self._stop_in_chat(chat_id)
+            await utils.answer(message, self.strings("stopped"))
+        else:
+            await utils.answer(message, self.strings("no_active"))
+    
+    @loader.command(ru_doc="Статус авто-сообщений в этом чате")
+    async def rassstatcmd(self, message):
+        """- Показать статус авто-сообщений"""
+        chat_id = message.chat_id
+        
+        if chat_id in self.active_tasks:
+            task_info = self.active_tasks[chat_id]
+            stats_info = self.stats.get(chat_id, {"sent": 0, "total": 0})
+            
+            status_text = (
+                f"📝 <b>Текст:</b> <code>{task_info['text'][:30]}...</code>\n"
+                f"🕓 <b>Задержка:</b> {task_info['min_delay']}-{task_info['max_delay']} мин\n"
+                f"🔢 <b>Отправлено:</b> {stats_info['sent']}/{task_info['total_count']}\n"
+                f"🎨 <b>Шрифт:</b> {task_info['font']}\n"
+                f"📌 <b>Цитата:</b> {task_info['quote']}\n"
+                f"⏱️ <b>Запущено:</b> {task_info['start_time'].strftime('%H:%M:%S')}"
+            )
+            
+            await utils.answer(message, status_text)
+        else:
+            await utils.answer(message, self.strings("no_active"))
+    
+    @loader.command(ru_doc="Список всех активных авто-сообщений")
+    async def rasslistcmd(self, message):
+        """- Показать все активные авто-сообщения"""
+        if not self.active_tasks:
+            await utils.answer(message, "📭 <b>Нет активных авто-сообщений</b>")
+            return
+        
+        list_text = ""
+        for chat_id, task_info in self.active_tasks.items():
+            try:
+                chat = await self.client.get_entity(chat_id)
+                chat_name = chat.title if hasattr(chat, 'title') else chat.first_name
+                stats = self.stats.get(chat_id, {"sent": 0, "total": 0})
+                
+                list_text += (
+                    f"\n💬 <b>{chat_name}</b>\n"
+                    f"   📝: {task_info['text'][:20]}...\n"
+                    f"   📊: {stats['sent']}/{task_info['total_count']}\n"
+                    f"   🕓: {task_info['min_delay']}-{task_info['max_delay']} мин\n"
+                )
+            except:
+                list_text += f"\n💬 <b>Чат {chat_id}</b> (недоступен)\n"
+        
+        await utils.answer(message, self.strings("list").format(list=list_text))
+    
+    @loader.command(ru_doc="Доступные шрифты")
+    async def rassfontscmd(self, message):
+        """- Показать доступные шрифты"""
+        fonts_info = "🎨 <b>Доступные шрифты:</b>\n\n"
+        
+        for font_name, font_code in self.FONTS.items():
+            example = self._apply_font("пример", font_name)
+            fonts_info += f"• <b>{font_name}</b>: <code>{example}</code>\n"
+        
+        fonts_info += "\n<i>Используйте: .rass 10 20 5 жирный текст</i>"
+        await utils.answer(message, fonts_info)
+    
+    @loader.command(ru_doc="Остановить все авто-сообщения")
+    async def rassstopallcmd(self, message):
+        """- Остановить все авто-сообщения"""
+        stopped_count = 0
+        
+        for chat_id in list(self.active_tasks.keys()):
+            await self._stop_in_chat(chat_id)
+            stopped_count += 1
+        
+        await utils.answer(message, f"🛑 <b>Остановлено {stopped_count} авто-сообщений</b>")
+    
+    async def _send_messages_loop(self, chat_id, text, min_delay, max_delay, total_count, font_name, quote_mode, original_message):
+        """Основной цикл отправки сообщений"""
+        sent_count = 0
+        
+        while sent_count < total_count and chat_id in self.active_tasks:
+            try:
+                # Случайная задержка в минутах
+                delay_minutes = random.randint(min_delay, max_delay)
+                delay_seconds = delay_minutes * 60
+                
+                # Ждем
+                for _ in range(delay_seconds):
+                    if chat_id not in self.active_tasks:
+                        return
+                    await asyncio.sleep(1)
+                
+                # Форматируем текст
+                formatted_text = self._apply_font(text, font_name)
+                
+                # Определяем сообщение для цитирования
+                reply_to = None
+                if quote_mode == "реплай" and original_message.is_reply:
+                    reply_to = original_message.reply_to_msg_id
+                
+                # Отправляем сообщение
+                await self.client.send_message(
+                    entity=chat_id,
+                    message=formatted_text,
+                    reply_to=reply_to
+                )
+                
+                # Обновляем статистику
+                sent_count += 1
+                self.message_counters[chat_id] = sent_count
+                
+                if chat_id in self.stats:
+                    self.stats[chat_id]["sent"] = sent_count
+                
+                logger.info(f"Отправлено авто-сообщение в чат {chat_id} ({sent_count}/{total_count})")
+                
+                # Проверяем, не достигли ли лимита
+                if sent_count >= total_count:
+                    if chat_id in self.active_tasks:
+                        del self.active_tasks[chat_id]
+                    logger.info(f"Авто-сообщения завершены в чате {chat_id}")
+                    break
+                    
+            except Exception as e:
+                logger.error(f"Ошибка отправки в чат {chat_id}: {e}")
+                # Ждем 30 секунд при ошибке
+                await asyncio.sleep(30)
+    
+    async def _stop_in_chat(self, chat_id):
+        """Остановить задачу в указанном чате"""
+        if chat_id in self.active_tasks:
+            task_info = self.active_tasks[chat_id]
+            task_info["task"].cancel()
+            
+            try:
+                await task_info["task"]
+            except asyncio.CancelledError:
+                pass
+            except Exception:
+                pass
+            
+            del self.active_tasks[chat_id]
+            
+            # Сохраняем статистику в БД
+            if chat_id in self.message_counters:
+                await self.db.set(
+                    __name__,
+                    f"stats_{chat_id}",
+                    {
+                        "last_sent": self.message_counters[chat_id],
+                        "total": task_info["total_count"],
+                        "stopped_at": datetime.now().isoformat()
+                    }
+                )
+                del self.message_counters[chat_id]
+            
+            logger.info(f"Авто-сообщения остановлены в чате {chat_id}")
+    
+    def _apply_font(self, text, font_name):
+        """Применяет выбранный шрифт к тексту"""
+        font_code = self.FONTS.get(font_name, "")
+        
+        if not font_code:
+            return text
+        
+        if font_name == "ссылка":
+            # Для ссылки нужен специальный формат: [текст](URL)
+            # Если текст уже содержит ссылку, оставляем как есть
+            if "http://" in text or "https://" in text:
+                parts = text.split(" ", 1)
+                if len(parts) == 2:
+                    return f"[{parts[0]}]({parts[1]})"
+                else:
+                    return f"[ссылка]({text})"
+            else:
+                return text
+        elif font_name == "код":
+            return f"```\n{text}\n```"
+        else:
+            return f"{font_code}{text}{font_code[::-1] if len(font_code) > 1 else font_code}"
+    
+    def _get_help(self):
+        """Возвращает справку по использованию"""
+        return (
+            "📖 <b>Использование команды .rass:</b>\n\n"
+            "<code>.rass [мин] [макс] [количество] [шрифт] [текст]</code>\n\n"
+            "📌 <b>Параметры:</b>\n"
+            "• <b>мин</b> - минимальная задержка (минуты)\n"
+            "• <b>макс</b> - максимальная задержка (минуты)\n"
+            "• <b>количество</b> - сколько раз отправить\n"
+            "• <b>шрифт</b> - стиль текста\n"
+            "• <b>текст</b> - сообщение для отправки\n\n"
+            "🎨 <b>Шрифты:</b> обычный, жирный, курсив, моно, жирный+курсив, зачеркнутый, спойлер, ссылка, код\n\n"
+            "💡 <b>Для цитирования:</b> сделайте реплай на сообщение при запуске команды\n\n"
+            "📌 <b>Примеры:</b>\n"
+            "<code>.rass 10 20 5 жирный Привет всем!</code>\n"
+            "<code>.rass 5 15 3 моно Код: 12345</code>\n"
+            "<code>.rass 30 60 10 обычный Напоминание: встреча</code>"
+        )
+    
+    async def on_unload(self):
+        """При выгрузке модуля останавливаем все задачи"""
+        for chat_id in list(self.active_tasks.keys()):
+            await self._stop_in_chat(chat_id)
+        logger.info("AutoMessage выгружен, все задачи остановлены")

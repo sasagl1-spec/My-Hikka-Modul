@@ -1,0 +1,455 @@
+# meta developer: @kiminaiq
+# meta pic: https://img.icons8.com/color/48/000000/wallet--v1.png
+# meta description: Автоматизация работы с кошельком @wallet и публикация цен TON
+# scope: hikka_only
+# scope: hikka_min 1.6.0
+
+import asyncio
+import time
+import re
+from datetime import datetime, timedelta
+from .. import loader, utils
+import logging
+
+logger = logging.getLogger(__name__)
+
+@loader.tds
+class WalletAutomation(loader.Module):
+    """Автоматизация @wallet: открытие кошелька и получение цен TON"""
+    
+    strings = {
+        "name": "WalletAutomation",
+        "started": "✅ <b>Автоматизация запущена!</b>\n🏦 Кошелек: @wallet\n📢 Канал: @priceDollarTon\n⏱ Цикл: 3 минуты",
+        "stopped": "⏹️ <b>Автоматизация остановлена</b>",
+        "already_running": "⚠️ <b>Уже работает</b>",
+        "not_running": "📭 <b>Не запущена</b>",
+        "test_sent": "📤 <b>Тестовый пост отправлен</b>",
+        "status": "🔄 <b>Статус:</b> {}\n⏰ <b>Последнее:</b> {}\n💰 <b>Баланс:</b> {} TON\n💎 <b>Цена:</b> {}₽",
+        "error": "❌ <b>Ошибка:</b> {}",
+        "opening_wallet": "🏦 Открываю кошелек...",
+        "getting_prices": "📊 Получаю цены...",
+        "wallet_ready": "✅ Кошелек открыт",
+        "no_data": "Нет данных",
+        "auth_required": "🔐 Требуется авторизация в @wallet",
+        "balance_updated": "💰 Баланс обновлен"
+    }
+    
+    def __init__(self):
+        self.task = None
+        self.is_running = False
+        self.last_update = None
+        self.last_ton_price = None
+        self.last_ton_balance = None
+        self.wallet_bot = "@wallet"
+        self.target_channel = "@priceDollarTon"
+        self.wallet_opened = False
+        self.session_started = False
+        
+        # Состояния автовзаимодействия
+        self.wallet_state = {
+            "authenticated": False,
+            "balance_checked": False,
+            "prices_checked": False,
+            "last_command": None
+        }
+    
+    async def client_ready(self, client, db):
+        self.client = client
+        self.db = db
+        logger.info("WalletAutomation загружен")
+    
+    @loader.command(
+        ru_doc="Запустить автоматизацию @wallet",
+        en_doc="Start @wallet automation"
+    )
+    async def startwalletauto(self, message):
+        """Запустить автоматизацию"""
+        if self.is_running:
+            await utils.answer(message, self.strings("already_running"))
+            return
+        
+        self.is_running = True
+        self.task = asyncio.create_task(self._wallet_automation_loop())
+        
+        await utils.answer(message, self.strings("started"))
+        logger.info("Автоматизация кошелька запущена")
+    
+    @loader.command(
+        ru_doc="Остановить автоматизацию",
+        en_doc="Stop automation"
+    )
+    async def stopwalletauto(self, message):
+        """Остановить автоматизацию"""
+        if not self.is_running:
+            await utils.answer(message, self.strings("not_running"))
+            return
+        
+        self.is_running = False
+        if self.task:
+            self.task.cancel()
+            self.task = None
+        
+        # Сбрасываем состояние
+        self.wallet_opened = False
+        self.session_started = False
+        self.wallet_state = {
+            "authenticated": False,
+            "balance_checked": False,
+            "prices_checked": False,
+            "last_command": None
+        }
+        
+        await utils.answer(message, self.strings("stopped"))
+        logger.info("Автоматизация кошелька остановлена")
+    
+    @loader.command(
+        ru_doc="Открыть кошелек вручную",
+        en_doc="Open wallet manually"
+    )
+    async def openwallet(self, message):
+        """Открыть кошелек"""
+        await utils.answer(message, self.strings("opening_wallet"))
+        
+        try:
+            # Начинаем сессию с кошельком
+            await self._start_wallet_session()
+            
+            if self.wallet_opened:
+                await utils.answer(message, self.strings("wallet_ready"))
+            else:
+                await utils.answer(message, "⚠️ Не удалось открыть кошелек")
+                
+        except Exception as e:
+            await utils.answer(message, self.strings("error").format(str(e)))
+    
+    @loader.command(
+        ru_doc="Проверить баланс и цены",
+        en_doc="Check balance and prices"
+    )
+    async def checkwallet(self, message):
+        """Проверить кошелек"""
+        await utils.answer(message, self.strings("getting_prices"))
+        
+        try:
+            ton_balance, ton_price = await self._get_wallet_data()
+            
+            if ton_balance is not None and ton_price is not None:
+                # Формируем пост
+                post = self._format_post(ton_price, ton_balance)
+                
+                # Отправляем в канал
+                await self.client.send_message(
+                    self.target_channel,
+                    post,
+                    parse_mode='HTML'
+                )
+                
+                # Сохраняем данные
+                self.last_ton_balance = ton_balance
+                self.last_ton_price = ton_price
+                self.last_update = time.time()
+                
+                await utils.answer(message, f"✅ Данные получены\nБаланс: {ton_balance} TON\nЦена: {ton_price}₽")
+            else:
+                await utils.answer(message, "❌ Не удалось получить данные")
+                
+        except Exception as e:
+            await utils.answer(message, self.strings("error").format(str(e)))
+    
+    @loader.command(
+        ru_doc="Статус автоматизации",
+        en_doc="Automation status"
+    )
+    async def walletautostatus(self, message):
+        """Статус"""
+        status = "🟢 Работает" if self.is_running else "🔴 Остановлена"
+        
+        last_time = "—"
+        if self.last_update:
+            last_time = self._get_msk_time_str(self.last_update)
+        
+        balance_info = f"{self.last_ton_balance} TON" if self.last_ton_balance else self.strings("no_data")
+        price_info = f"{self.last_ton_price}₽" if self.last_ton_price else self.strings("no_data")
+        
+        wallet_state = "✅ Открыт" if self.wallet_opened else "❌ Закрыт"
+        auth_state = "✅ Авторизован" if self.wallet_state["authenticated"] else "❌ Не авторизован"
+        
+        info = f"{self.strings('status').format(status, last_time, balance_info, price_info)}\n\n"
+        info += f"🏦 <b>Состояние кошелька:</b>\n"
+        info += f"• {wallet_state}\n"
+        info += f"• {auth_state}\n"
+        info += f"• Баланс проверен: {'✅' if self.wallet_state['balance_checked'] else '❌'}\n"
+        info += f"• Цены проверены: {'✅' if self.wallet_state['prices_checked'] else '❌'}"
+        
+        await utils.answer(message, info, parse_mode='HTML')
+    
+    @loader.command(
+        ru_doc="Тестовый пост с текущими данными",
+        en_doc="Test post with current data"
+    )
+    async def testwalletpost(self, message):
+        """Тестовый пост"""
+        if not self.last_ton_price or not self.last_ton_balance:
+            await utils.answer(message, "❌ Нет данных для поста")
+            return
+        
+        post = self._format_post(self.last_ton_price, self.last_ton_balance)
+        
+        await self.client.send_message(
+            self.target_channel,
+            post,
+            parse_mode='HTML'
+        )
+        
+        await utils.answer(message, self.strings("test_sent"))
+    
+    @loader.command(
+        ru_doc="Сбросить состояние кошелька",
+        en_doc="Reset wallet state"
+    )
+    async def resetwallet(self, message):
+        """Сбросить состояние"""
+        self.wallet_opened = False
+        self.session_started = False
+        self.wallet_state = {
+            "authenticated": False,
+            "balance_checked": False,
+            "prices_checked": False,
+            "last_command": None
+        }
+        
+        await utils.answer(message, "🔄 Состояние кошелька сброшено")
+    
+    async def _wallet_automation_loop(self):
+        """Основной цикл автоматизации кошелька"""
+        logger.info("Цикл автоматизации кошелька запущен")
+        
+        while self.is_running:
+            try:
+                # Шаг 1: Открываем/проверяем кошелек
+                if not self.wallet_opened or not self.wallet_state["authenticated"]:
+                    await self._start_wallet_session()
+                    await asyncio.sleep(2)
+                
+                # Шаг 2: Получаем данные из кошелька
+                if self.wallet_opened:
+                    ton_balance, ton_price = await self._get_wallet_data()
+                    
+                    if ton_balance is not None and ton_price is not None:
+                        # Сохраняем данные
+                        self.last_ton_balance = ton_balance
+                        self.last_ton_price = ton_price
+                        self.last_update = time.time()
+                        
+                        # Шаг 3: Публикуем пост
+                        post = self._format_post(ton_price, ton_balance)
+                        
+                        await self.client.send_message(
+                            self.target_channel,
+                            post,
+                            parse_mode='HTML'
+                        )
+                        
+                        logger.info(f"Данные опубликованы | Баланс: {ton_balance} TON, Цена: {ton_price}₽")
+                
+                # Ждем 3 минуты до следующей проверки
+                wait_time = 180  # 3 минуты
+                for i in range(wait_time):
+                    if not self.is_running:
+                        break
+                    await asyncio.sleep(1)
+                    
+            except Exception as e:
+                logger.error(f"Ошибка в цикле автоматизации: {e}")
+                await asyncio.sleep(30)  # Ждем перед повторной попыткой
+    
+    async def _start_wallet_session(self):
+        """Начало сессии с кошельком"""
+        try:
+            # Отправляем /start для инициализации
+            await self.client.send_message(self.wallet_bot, "/start")
+            await asyncio.sleep(2)
+            
+            # Получаем ответ
+            messages = await self.client.get_messages(self.wallet_bot, limit=3)
+            
+            # Анализируем ответы
+            for msg in messages:
+                if msg.text:
+                    # Проверяем, требует ли бот авторизации
+                    if any(word in msg.text.lower() for word in ["войти", "login", "авториз", "привет"]):
+                        # Пытаемся нажать кнопку "Открыть кошелек" или аналогичную
+                        if msg.buttons:
+                            for row in msg.buttons:
+                                for button in row:
+                                    if any(word in button.text.lower() for word in ["кошелек", "wallet", "открыть", "open"]):
+                                        await button.click()
+                                        await asyncio.sleep(2)
+                                        self.wallet_opened = True
+                                        self.wallet_state["authenticated"] = True
+                                        return True
+                    
+                    # Если бот показывает кошелек
+                    elif any(word in msg.text.lower() for word in ["баланс", "balance", "ton", "кошелек", "wallet"]):
+                        self.wallet_opened = True
+                        self.wallet_state["authenticated"] = True
+                        return True
+            
+            # Если не нашли кнопок, пытаемся отправить команду напрямую
+            await self.client.send_message(self.wallet_bot, "кошелек")
+            await asyncio.sleep(2)
+            
+            await self.client.send_message(self.wallet_bot, "баланс")
+            await asyncio.sleep(2)
+            
+            self.wallet_opened = True
+            self.wallet_state["authenticated"] = True
+            return True
+            
+        except Exception as e:
+            logger.error(f"Ошибка открытия кошелька: {e}")
+            self.wallet_opened = False
+            return False
+    
+    async def _get_wallet_data(self):
+        """Получение данных из кошелька"""
+        try:
+            # Отправляем команды для получения данных
+            await self.client.send_message(self.wallet_bot, "баланс")
+            await asyncio.sleep(2)
+            
+            await self.client.send_message(self.wallet_bot, "курс ton")
+            await asyncio.sleep(2)
+            
+            # Получаем ответы
+            messages = await self.client.get_messages(self.wallet_bot, limit=10)
+            
+            ton_balance = None
+            ton_price = None
+            
+            for msg in messages:
+                if msg.text:
+                    # Ищем баланс TON
+                    if not ton_balance:
+                        ton_balance = self._extract_ton_balance(msg.text)
+                    
+                    # Ищем цену TON
+                    if not ton_price:
+                        ton_price = self._extract_ton_price(msg.text)
+                    
+                    # Если нашли оба значения, выходим
+                    if ton_balance is not None and ton_price is not None:
+                        break
+            
+            # Обновляем состояние
+            self.wallet_state["balance_checked"] = ton_balance is not None
+            self.wallet_state["prices_checked"] = ton_price is not None
+            
+            return ton_balance, ton_price
+            
+        except Exception as e:
+            logger.error(f"Ошибка получения данных из кошелька: {e}")
+            return None, None
+    
+    def _extract_ton_balance(self, text):
+        """Извлечение баланса TON"""
+        try:
+            patterns = [
+                r'баланс[:\s]*([\d,]+\.?\d*)\s*ton',
+                r'balance[:\s]*([\d,]+\.?\d*)\s*ton',
+                r'ton[:\s]*([\d,]+\.?\d*)\s*',
+                r'([\d,]+\.?\d*)\s*ton.*баланс',
+                r'([\d,]+\.?\d*)\s*ton',
+                r'(\d+(?:[.,]\d+)?)\s*toncoin'
+            ]
+            
+            for pattern in patterns:
+                match = re.search(pattern, text, re.IGNORECASE)
+                if match:
+                    balance_str = match.group(1).replace(",", ".")
+                    return float(balance_str)
+            
+            return None
+            
+        except Exception as e:
+            logger.error(f"Ошибка парсинга баланса: {e}")
+            return None
+    
+    def _extract_ton_price(self, text):
+        """Извлечение цены TON"""
+        try:
+            patterns = [
+                r'ton[:\s]*([\d,]+\.?\d*)\s*₽',
+                r'ton[:\s]*([\d,]+\.?\d*)\s*руб',
+                r'курс.*ton[:\s]*([\d,]+\.?\d*)\s*₽',
+                r'цена.*ton[:\s]*([\d,]+\.?\d*)\s*₽',
+                r'([\d,]+\.?\d*)\s*₽.*ton',
+                r'(\d+(?:[.,]\d+)?)\s*руб.*ton'
+            ]
+            
+            for pattern in patterns:
+                match = re.search(pattern, text, re.IGNORECASE)
+                if match:
+                    price_str = match.group(1).replace(",", ".")
+                    return float(price_str)
+            
+            return None
+            
+        except Exception as e:
+            logger.error(f"Ошибка парсинга цены: {e}")
+            return None
+    
+    def _get_msk_time(self):
+        """Получение времени по МСК"""
+        utc_now = datetime.utcnow()
+        msk_time = utc_now + timedelta(hours=3)
+        return msk_time
+    
+    def _get_msk_time_str(self, timestamp=None):
+        """Форматирование времени МСК"""
+        if timestamp:
+            utc_time = datetime.utcfromtimestamp(timestamp)
+            msk_time = utc_time + timedelta(hours=3)
+        else:
+            msk_time = self._get_msk_time()
+        
+        return msk_time.strftime("%H:%M МСК")
+    
+    def _format_number(self, number):
+        """Форматирование числа"""
+        if isinstance(number, (int, float)):
+            if number.is_integer():
+                return f"{int(number):,}".replace(",", " ")
+            else:
+                return f"{number:,.2f}".replace(",", " ").replace(".", ",")
+        return str(number)
+    
+    def _format_post(self, ton_price, ton_balance):
+        """Форматирование поста"""
+        # Форматируем числа
+        price_formatted = self._format_number(ton_price)
+        balance_formatted = self._format_number(ton_balance)
+        
+        # Получаем время МСК
+        msk_time = self._get_msk_time_str()
+        
+        # Формируем пост
+        post = f"💎 TON: <b>{price_formatted}₽</b>\n"
+        post += f"💰 Баланс: <b>{balance_formatted} TON</b>\n\n"
+        
+        if self.last_ton_balance and ton_price:
+            total_value = self.last_ton_balance * ton_price
+            total_formatted = self._format_number(total_value)
+            post += f"💼 Стоимость: <b>{total_formatted}₽</b>\n\n"
+        
+        post += f"<i>🕐 {msk_time} | @priceDollarTon</i>\n"
+        post += f"<i>🏦 Источник: @wallet</i>"
+        
+        return post
+    
+    async def on_unload(self):
+        """Очистка при выгрузке"""
+        self.is_running = False
+        
+        if self.task:
+            self.task.cancel()

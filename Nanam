@@ -1,77 +1,91 @@
 # meta developer: @kiminaiq
-# meta pic: https://img.icons8.com/color/48/000000/wallet--v1.png
-# meta description: Автоматизация @wallet через кнопки интерфейса
+# meta pic: https://img.icons8.com/color/48/000000/yandex.png
+# meta description: Парсинг цен TON и USD из Яндекс.Поиска
 # scope: hikka_only
 # scope: hikka_min 1.6.0
 
+import aiohttp
 import asyncio
 import time
 import re
 from datetime import datetime, timedelta
-from telethon.tl.types import KeyboardButtonRow, KeyboardButtonCallback
+from urllib.parse import quote
 from .. import loader, utils
 import logging
 
 logger = logging.getLogger(__name__)
 
 @loader.tds
-class WalletButtonAutomation(loader.Module):
-    """Автоматизация @wallet через нажатие кнопок"""
+class YandexPriceParser(loader.Module):
+    """Парсинг цен из Яндекс.Поиска и публикация в канал"""
     
     strings = {
-        "name": "WalletButtonBot",
-        "started": "✅ <b>Бот запущен!</b>\n🔘 Метод: нажатие кнопок\n📢 Канал: @priceDollarTon\n⏱ Цикл: 3 мин",
-        "stopped": "⏹️ <b>Бот остановлен</b>",
-        "already_running": "⚠️ <b>Уже работает</b>",
-        "not_running": "📭 <b>Не запущен</b>",
+        "name": "YandexPriceParser",
+        "started": "✅ <b>Парсер запущен!</b>\n🔍 Источник: Яндекс.Поиск\n📢 Канал: @priceDollarTon\n⏱ Интервал: 3 мин",
+        "stopped": "⏹️ <b>Парсер остановлен</b>",
+        "already_running": "⚠️ <b>Парсер уже работает</b>",
+        "not_running": "📭 <b>Парсер не запущен</b>",
         "test_sent": "📤 <b>Тестовый пост отправлен</b>",
-        "status": "🔄 <b>Статус:</b> {}\n⏰ <b>Последнее:</b> {}\n💎 <b>Цена TON:</b> {}₽",
+        "status": "🔄 <b>Статус:</b> {}\n⏰ <b>Последнее:</b> {}\n💵 <b>USD:</b> {}₽\n💎 <b>TON:</b> {}₽",
         "error": "❌ <b>Ошибка:</b> {}",
-        "finding_button": "🔍 Ищу кнопку 'Кошелёк'...",
-        "button_found": "✅ Кнопка найдена",
-        "button_not_found": "❌ Кнопка не найдена",
-        "clicking_button": "🖱️ Нажимаю кнопку...",
-        "waiting_data": "⏳ Жду данные...",
-        "no_price_data": "⚠️ Цена не найдена в ответе",
-        "parsed_success": "✅ Данные получены"
+        "parsing": "🔍 Парсинг Яндекс...",
+        "parsing_success": "✅ Данные получены",
+        "parsing_failed": "❌ Не удалось получить данные",
+        "no_data": "Нет данных"
     }
     
     def __init__(self):
         self.task = None
         self.is_running = False
         self.last_update = None
+        self.last_usd_price = None
         self.last_ton_price = None
-        self.wallet_bot = "@wallet"
         self.target_channel = "@priceDollarTon"
-        self.button_found = False
+        self.session = None
         
+        # URL для парсинга
+        self.urls = {
+            "ton": "https://yandex.ru/search/touch/?text={}&lr=1107",
+            "usd": "https://yandex.ru/search/touch/?text={}&lr=1107"
+        }
+        
+        # User-Agent для имитации мобильного браузера
+        self.headers = {
+            'User-Agent': 'Mozilla/5.0 (Linux; Android 10; SM-G973F) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.120 Mobile Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+            'Accept-Language': 'ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7',
+            'Accept-Encoding': 'gzip, deflate',
+            'Connection': 'keep-alive',
+        }
+    
     async def client_ready(self, client, db):
         self.client = client
         self.db = db
-        logger.info("WalletButtonBot загружен")
+        self.session = aiohttp.ClientSession(headers=self.headers)
+        logger.info("YandexPriceParser загружен")
     
     @loader.command(
-        ru_doc="Запустить бота с кнопочным управлением",
-        en_doc="Start bot with button control"
+        ru_doc="Запустить парсинг из Яндекс",
+        en_doc="Start parsing from Yandex"
     )
-    async def startbuttonbot(self, message):
-        """Запустить бота"""
+    async def startyandexparse(self, message):
+        """Запустить парсинг"""
         if self.is_running:
             await utils.answer(message, self.strings("already_running"))
             return
         
         self.is_running = True
-        self.task = asyncio.create_task(self._button_automation_loop())
+        self.task = asyncio.create_task(self._parsing_loop())
         
         await utils.answer(message, self.strings("started"))
-        logger.info("Бот с кнопочным управлением запущен")
+        logger.info("Парсер Яндекс запущен")
     
     @loader.command(
-        ru_doc="Остановить бота",
-        en_doc="Stop bot"
+        ru_doc="Остановить парсинг",
+        en_doc="Stop parsing"
     )
-    async def stopbuttonbot(self, message):
-        """Остановить бота"""
+    async def stopyandexparse(self, message):
+        """Остановить парсинг"""
         if not self.is_running:
             await utils.answer(message, self.strings("not_running"))
             return
@@ -82,113 +96,47 @@ class WalletButtonAutomation(loader.Module):
             self.task = None
         
         await utils.answer(message, self.strings("stopped"))
-        logger.info("Бот остановлен")
+        logger.info("Парсер Яндекс остановлен")
     
     @loader.command(
-        ru_doc="Найти и нажать кнопку 'Кошелёк'",
-        en_doc="Find and click 'Кошелёк' button"
+        ru_doc="Тестовый парсинг и пост",
+        en_doc="Test parsing and post"
     )
-    async def findwalletbutton(self, message):
-        """Найти кнопку кошелька"""
-        await utils.answer(message, self.strings("finding_button"))
+    async def testyandexparse(self, message):
+        """Тестовый парсинг"""
+        await utils.answer(message, self.strings("parsing"))
         
         try:
-            success = await self._find_and_click_wallet_button()
+            usd_price, ton_price = await self._parse_prices()
             
-            if success:
-                await utils.answer(message, self.strings("button_found"))
+            if usd_price and ton_price:
+                post = self._format_post(usd_price, ton_price)
                 
-                # Ждем данные
-                await asyncio.sleep(2)
+                # Отправляем в канал
+                await self.client.send_message(
+                    self.target_channel,
+                    post,
+                    parse_mode='HTML'
+                )
                 
-                # Получаем цену
-                price = await self._extract_price_from_messages()
-                if price:
-                    await utils.answer(message, f"✅ Цена TON: {price}₽")
-                    self.last_ton_price = price
-                else:
-                    await utils.answer(message, self.strings("no_price_data"))
+                # Сохраняем данные
+                self.last_usd_price = usd_price
+                self.last_ton_price = ton_price
+                self.last_update = time.time()
+                
+                await utils.answer(message, self.strings("test_sent"))
+                await message.respond(post, parse_mode='HTML')
             else:
-                await utils.answer(message, self.strings("button_not_found"))
+                await utils.answer(message, self.strings("parsing_failed"))
                 
         except Exception as e:
             await utils.answer(message, self.strings("error").format(str(e)))
     
     @loader.command(
-        ru_doc="Тестовая публикация",
-        en_doc="Test publication"
+        ru_doc="Статус парсера",
+        en_doc="Parser status"
     )
-    async def testbuttonpost(self, message):
-        """Тестовый пост"""
-        if not self.last_ton_price:
-            await utils.answer(message, "❌ Нет данных о цене")
-            return
-        
-        post = self._format_post(self.last_ton_price)
-        
-        await self.client.send_message(
-            self.target_channel,
-            post,
-            parse_mode='HTML'
-        )
-        
-        await utils.answer(message, self.strings("test_sent"))
-    
-    @loader.command(
-        ru_doc="Полный тест (кнопка + парсинг + пост)",
-        en_doc="Full test (button + parsing + post)"
-    )
-    async def fulltest(self, message):
-        """Полный тест"""
-        await utils.answer(message, "🔄 Запускаю полный тест...")
-        
-        try:
-            # 1. Ищем и нажимаем кнопку
-            await utils.answer(message, self.strings("finding_button"))
-            button_success = await self._find_and_click_wallet_button()
-            
-            if not button_success:
-                await utils.answer(message, "❌ Кнопка не найдена")
-                return
-            
-            await utils.answer(message, "✅ Кнопка нажата")
-            
-            # 2. Ждем данные
-            await utils.answer(message, self.strings("waiting_data"))
-            await asyncio.sleep(3)
-            
-            # 3. Парсим цену
-            await utils.answer(message, "📊 Парсим данные...")
-            price = await self._extract_price_from_messages()
-            
-            if not price:
-                await utils.answer(message, "❌ Цена не найдена")
-                return
-            
-            # 4. Формируем и отправляем пост
-            post = self._format_post(price)
-            
-            await self.client.send_message(
-                self.target_channel,
-                post,
-                parse_mode='HTML'
-            )
-            
-            # 5. Сохраняем и показываем результат
-            self.last_ton_price = price
-            self.last_update = time.time()
-            
-            await utils.answer(message, f"✅ Тест завершен!\n💎 Цена TON: {price}₽")
-            await message.respond(post, parse_mode='HTML')
-            
-        except Exception as e:
-            await utils.answer(message, self.strings("error").format(str(e)))
-    
-    @loader.command(
-        ru_doc="Статус бота",
-        en_doc="Bot status"
-    )
-    async def buttonbotstatus(self, message):
+    async def yandexstatus(self, message):
         """Статус"""
         status = "🟢 Работает" if self.is_running else "🔴 Остановлен"
         
@@ -196,51 +144,83 @@ class WalletButtonAutomation(loader.Module):
         if self.last_update:
             last_time = self._get_msk_time_str(self.last_update)
         
-        price_info = f"{self.last_ton_price}₽" if self.last_ton_price else "Нет данных"
-        button_state = "✅ Найдена" if self.button_found else "❌ Не найдена"
+        usd_info = f"{self.last_usd_price:.2f}₽" if self.last_usd_price else self.strings("no_data")
+        ton_info = f"{self.last_ton_price:.2f}₽" if self.last_ton_price else self.strings("no_data")
         
-        info = f"{self.strings('status').format(status, last_time, price_info)}\n"
-        info += f"🔘 <b>Кнопка 'Кошелёк':</b> {button_state}"
-        
-        await utils.answer(message, info, parse_mode='HTML')
+        info = self.strings("status").format(status, last_time, usd_info, ton_info)
+        await utils.answer(message, info)
     
-    async def _button_automation_loop(self):
-        """Основной цикл автоматизации"""
-        logger.info("Цикл кнопочной автоматизации запущен")
+    @loader.command(
+        ru_doc="Принудительное обновление",
+        en_doc="Force update"
+    )
+    async def updateyandex(self, message):
+        """Обновить сейчас"""
+        await utils.answer(message, self.strings("parsing"))
+        
+        try:
+            usd_price, ton_price = await self._parse_prices()
+            
+            if usd_price and ton_price:
+                post = self._format_post(usd_price, ton_price)
+                await message.respond(post, parse_mode='HTML')
+                
+                # Сохраняем для статуса
+                self.last_usd_price = usd_price
+                self.last_ton_price = ton_price
+                self.last_update = time.time()
+            else:
+                await utils.answer(message, self.strings("parsing_failed"))
+                
+        except Exception as e:
+            await utils.answer(message, self.strings("error").format(str(e)))
+    
+    @loader.command(
+        ru_doc="Проверить доступность Яндекс",
+        en_doc="Check Yandex availability"
+    )
+    async def checkyandex(self, message):
+        """Проверить Яндекс"""
+        await utils.answer(message, "🔍 Проверяю доступность Яндекс...")
+        
+        try:
+            # Пробуем получить главную страницу
+            async with self.session.get("https://yandex.ru", timeout=10) as response:
+                if response.status == 200:
+                    await utils.answer(message, "✅ Яндекс доступен")
+                else:
+                    await utils.answer(message, f"⚠️ Яндекс вернул статус {response.status}")
+        except Exception as e:
+            await utils.answer(message, f"❌ Ошибка: {str(e)}")
+    
+    async def _parsing_loop(self):
+        """Основной цикл парсинга"""
+        logger.info("Цикл парсинга Яндекс запущен")
         
         while self.is_running:
             try:
-                # 1. Ищем и нажимаем кнопку "Кошелёк"
-                button_success = await self._find_and_click_wallet_button()
+                # Парсим цены
+                usd_price, ton_price = await self._parse_prices()
                 
-                if not button_success:
-                    logger.warning("Кнопка 'Кошелёк' не найдена")
-                    await asyncio.sleep(60)  # Ждем минуту перед повторной попыткой
-                    continue
-                
-                # 2. Ждем загрузки данных
-                await asyncio.sleep(3)
-                
-                # 3. Парсим цену из сообщений
-                price = await self._extract_price_from_messages()
-                
-                if price:
-                    # 4. Сохраняем цену
-                    self.last_ton_price = price
+                if usd_price and ton_price:
+                    # Сохраняем данные
+                    self.last_usd_price = usd_price
+                    self.last_ton_price = ton_price
                     self.last_update = time.time()
                     
-                    # 5. Формируем и отправляем пост
-                    post = self._format_post(price)
+                    # Форматируем пост
+                    post = self._format_post(usd_price, ton_price)
                     
+                    # Отправляем в канал
                     await self.client.send_message(
                         self.target_channel,
                         post,
                         parse_mode='HTML'
                     )
                     
-                    logger.info(f"Пост отправлен | Цена TON: {price}₽")
+                    logger.info(f"Пост отправлен | USD: {usd_price:.2f}₽, TON: {ton_price:.2f}₽")
                 
-                # 6. Ждем 3 минуты до следующего цикла
+                # Ждем 3 минуты до следующего обновления
                 wait_time = 180  # 3 минуты
                 for i in range(wait_time):
                     if not self.is_running:
@@ -248,117 +228,174 @@ class WalletButtonAutomation(loader.Module):
                     await asyncio.sleep(1)
                     
             except Exception as e:
-                logger.error(f"Ошибка в цикле автоматизации: {e}")
-                await asyncio.sleep(30)
+                logger.error(f"Ошибка в цикле парсинга: {e}")
+                await asyncio.sleep(30)  # Ждем перед повторной попыткой
     
-    async def _find_and_click_wallet_button(self):
-        """Поиск и нажатие кнопки 'Кошелёк'"""
+    async def _parse_prices(self):
+        """Парсинг цен из Яндекс"""
         try:
-            # Сначала отправляем /start для получения свежего интерфейса
-            await self.client.send_message(self.wallet_bot, "/start")
-            await asyncio.sleep(2)
+            # Парсим параллельно
+            usd_task = asyncio.create_task(self._parse_usd_price())
+            ton_task = asyncio.create_task(self._parse_ton_price())
             
-            # Получаем последние сообщения от бота
-            messages = await self.client.get_messages(self.wallet_bot, limit=10)
+            usd_price = await usd_task
+            ton_price = await ton_task
             
-            for msg in messages:
-                # Ищем сообщение с кнопками
-                if hasattr(msg, 'reply_markup') and msg.reply_markup:
-                    rows = msg.reply_markup.rows
+            return usd_price, ton_price
+            
+        except Exception as e:
+            logger.error(f"Ошибка парсинга: {e}")
+            return None, None
+    
+    async def _parse_usd_price(self):
+        """Парсинг цены USD"""
+        try:
+            search_query = "цена доллара"
+            url = self.urls["usd"].format(quote(search_query))
+            
+            async with self.session.get(url, timeout=10) as response:
+                if response.status == 200:
+                    html = await response.text()
                     
-                    for row in rows:
-                        for button in row.buttons:
-                            # Проверяем текст кнопки
-                            button_text = button.text.lower()
-                            
-                            # Ищем кнопку "Кошелёк" (с учетом возможных вариантов)
-                            if any(keyword in button_text for keyword in [
-                                'кошелек', 'кошелёк', 'wallet', 'баланс', 'balance'
-                            ]):
-                                logger.info(f"Найдена кнопка: {button.text}")
-                                
-                                # Нажимаем кнопку
-                                await msg.click(0, row.buttons.index(button))
-                                self.button_found = True
-                                
-                                # Ждем ответа
-                                await asyncio.sleep(2)
-                                return True
-            
-            # Если не нашли в кнопках, пробуем другие методы
-            logger.warning("Кнопка 'Кошелёк' не найдена в reply_markup")
-            
-            # Пробуем отправить текстовую команду
-            await self.client.send_message(self.wallet_bot, "кошелёк")
-            await asyncio.sleep(2)
-            
-            await self.client.send_message(self.wallet_bot, "баланс")
-            await asyncio.sleep(2)
-            
-            # Помечаем как найденную для продолжения работы
-            self.button_found = True
-            return True
-            
-        except Exception as e:
-            logger.error(f"Ошибка при работе с кнопками: {e}")
-            self.button_found = False
-            return False
-    
-    async def _extract_price_from_messages(self):
-        """Извлечение цены TON из сообщений бота"""
-        try:
-            # Получаем последние сообщения после нажатия кнопки
-            messages = await self.client.get_messages(self.wallet_bot, limit=20)
-            
-            for msg in messages:
-                if msg.text:
-                    # Ищем цену TON в различных форматах
-                    price = self._parse_ton_price_from_text(msg.text)
+                    # Ищем цену USD в разных форматах
+                    price = self._extract_usd_price_from_html(html)
+                    
                     if price:
-                        logger.info(f"Цена найдена в сообщении: {price}")
+                        logger.info(f"Цена USD найдена: {price}")
                         return price
             
-            # Если не нашли в сообщениях, пробуем получить свежие данные
-            await self.client.send_message(self.wallet_bot, "курс ton")
-            await asyncio.sleep(2)
+            # Если не нашли, пробуем альтернативный запрос
+            search_query = "курс доллара"
+            url = self.urls["usd"].format(quote(search_query))
             
-            messages = await self.client.get_messages(self.wallet_bot, limit=5)
-            
-            for msg in messages:
-                if msg.text:
-                    price = self._parse_ton_price_from_text(msg.text)
-                    if price:
-                        return price
+            async with self.session.get(url, timeout=10) as response:
+                if response.status == 200:
+                    html = await response.text()
+                    price = self._extract_usd_price_from_html(html)
+                    return price
             
             return None
             
         except Exception as e:
-            logger.error(f"Ошибка извлечения цены: {e}")
+            logger.error(f"Ошибка парсинга USD: {e}")
             return None
     
-    def _parse_ton_price_from_text(self, text):
-        """Парсинг цены TON из текста"""
+    async def _parse_ton_price(self):
+        """Парсинг цены TON"""
         try:
-            # Паттерны для поиска цены TON
+            search_query = "Цена тон"
+            url = self.urls["ton"].format(quote(search_query))
+            
+            async with self.session.get(url, timeout=10) as response:
+                if response.status == 200:
+                    html = await response.text()
+                    
+                    # Ищем цену TON в разных форматах
+                    price = self._extract_ton_price_from_html(html)
+                    
+                    if price:
+                        logger.info(f"Цена TON найдена: {price}")
+                        return price
+            
+            # Альтернативные запросы
+            alternative_queries = [
+                "TON курс",
+                "Toncoin цена",
+                "The Open Network цена",
+                "TON стоимость"
+            ]
+            
+            for query in alternative_queries:
+                url = self.urls["ton"].format(quote(query))
+                
+                async with self.session.get(url, timeout=10) as response:
+                    if response.status == 200:
+                        html = await response.text()
+                        price = self._extract_ton_price_from_html(html)
+                        if price:
+                            return price
+                
+                await asyncio.sleep(1)  # Пауза между запросами
+            
+            return None
+            
+        except Exception as e:
+            logger.error(f"Ошибка парсинга TON: {e}")
+            return None
+    
+    def _extract_usd_price_from_html(self, html):
+        """Извлечение цены USD из HTML"""
+        try:
+            # Паттерны для поиска цены USD
             patterns = [
-                r'ton[:\s]*([\d\s]+[.,]\d+)\s*₽',
-                r'курс.*ton[:\s]*([\d\s]+[.,]\d+)\s*₽',
-                r'цена.*ton[:\s]*([\d\s]+[.,]\d+)\s*₽',
-                r'([\d\s]+[.,]\d+)\s*₽.*ton',
-                r'ton[:\s]*(\d+)\s*₽',  # Целое число
-                r'(\d+(?:[.,]\d+)?)\s*₽\s*за\s*ton'
+                r'(\d+[.,]\d+)\s*₽.*[дД]оллар',
+                r'[дД]оллар.*(\d+[.,]\d+)\s*₽',
+                r'USD.*(\d+[.,]\d+)\s*₽',
+                r'(\d+[.,]\d+)\s*₽.*USD',
+                r'курс.*доллар.*(\d+[.,]\d+)',
+                r'(\d+)\s*₽\s*за\s*доллар',
+                # Для виджетов Яндекс
+                r'<span[^>]*>(\d+[.,]\d+)</span>\s*₽.*[дД]оллар',
+                r'data-price="(\d+[.,]\d+)"[^>]*>[дД]оллар',
+                r'<div[^>]*class="[^"]*currency[^"]*"[^>]*>.*?(\d+[.,]\d+).*?</div>'
             ]
             
             for pattern in patterns:
-                match = re.search(pattern, text, re.IGNORECASE)
-                if match:
-                    price_str = match.group(1).replace(' ', '').replace(',', '.')
-                    return float(price_str)
+                matches = re.findall(pattern, html, re.IGNORECASE | re.DOTALL)
+                for match in matches:
+                    try:
+                        # Очищаем и конвертируем в число
+                        price_str = str(match).replace(' ', '').replace(',', '.')
+                        price = float(price_str)
+                        
+                        # Проверяем разумный диапазон цены USD (30-150 руб)
+                        if 30 <= price <= 150:
+                            return round(price, 2)
+                    except (ValueError, AttributeError):
+                        continue
             
             return None
             
         except Exception as e:
-            logger.error(f"Ошибка парсинга текста: {e}")
+            logger.error(f"Ошибка извлечения USD: {e}")
+            return None
+    
+    def _extract_ton_price_from_html(self, html):
+        """Извлечение цены TON из HTML"""
+        try:
+            # Паттерны для поиска цены TON
+            patterns = [
+                r'(\d+[.,]\d+)\s*₽.*[TТ]он',
+                r'[TТ]он.*(\d+[.,]\d+)\s*₽',
+                r'Toncoin.*(\d+[.,]\d+)\s*₽',
+                r'(\d+[.,]\d+)\s*₽.*Toncoin',
+                r'TON.*(\d+[.,]\d+)\s*₽',
+                r'(\d+[.,]\d+)\s*₽.*TON',
+                r'курс.*[TТ]он.*(\d+[.,]\d+)',
+                # Для виджетов Яндекс
+                r'<span[^>]*>(\d+[.,]\d+)</span>\s*₽.*[TТ]он',
+                r'data-price="(\d+[.,]\d+)"[^>]*>[TТ]он',
+                r'<div[^>]*class="[^"]*cryptocurrency[^"]*"[^>]*>.*?(\d+[.,]\d+).*?</div>'
+            ]
+            
+            for pattern in patterns:
+                matches = re.findall(pattern, html, re.IGNORECASE | re.DOTALL)
+                for match in matches:
+                    try:
+                        # Очищаем и конвертируем в число
+                        price_str = str(match).replace(' ', '').replace(',', '.')
+                        price = float(price_str)
+                        
+                        # Проверяем разумный диапазон цены TON (10-1000 руб)
+                        if 10 <= price <= 1000:
+                            return round(price, 2)
+                    except (ValueError, AttributeError):
+                        continue
+            
+            return None
+            
+        except Exception as e:
+            logger.error(f"Ошибка извлечения TON: {e}")
             return None
     
     def _get_msk_time(self):
@@ -377,24 +414,29 @@ class WalletButtonAutomation(loader.Module):
         
         return msk_time.strftime("%H:%M МСК")
     
-    def _format_post(self, price):
-        """Форматирование поста"""
-        # Форматируем цену
-        if isinstance(price, (int, float)):
-            if price.is_integer():
-                price_str = f"{int(price):,}".replace(",", " ")
+    def _format_number(self, number):
+        """Форматирование числа"""
+        if isinstance(number, (int, float)):
+            if number.is_integer():
+                return f"{int(number):,}".replace(",", " ")
             else:
-                price_str = f"{price:,.2f}".replace(",", " ").replace(".", ",")
-        else:
-            price_str = str(price)
+                return f"{number:,.2f}".replace(",", " ").replace(".", ",")
+        return str(number)
+    
+    def _format_post(self, usd_price, ton_price):
+        """Форматирование поста"""
+        # Форматируем числа
+        usd_formatted = self._format_number(usd_price)
+        ton_formatted = self._format_number(ton_price)
         
         # Получаем время МСК
         msk_time = self._get_msk_time_str()
         
         # Формируем пост
-        post = f"💎 TON: <b>{price_str}₽</b>\n\n"
+        post = f"💵 USD: <b>{usd_formatted}₽</b>\n"
+        post += f"💎 TON: <b>{ton_formatted}₽</b>\n\n"
         post += f"<i>🕐 {msk_time} | @priceDollarTon</i>\n"
-        post += f"<i>🏦 Автоматически из @wallet</i>"
+        post += f"<i>🔍 Источник: Яндекс.Поиск</i>"
         
         return post
     
@@ -404,3 +446,6 @@ class WalletButtonAutomation(loader.Module):
         
         if self.task:
             self.task.cancel()
+        
+        if self.session:
+            await self.session.close()

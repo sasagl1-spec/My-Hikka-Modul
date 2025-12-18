@@ -1,0 +1,205 @@
+# -*- coding: utf-8 -*-
+# Модуль для автоматической отправки сообщений в Telegram чаты
+# ОБРАЗОВАТЕЛЬНЫЙ ПРИМЕР - только для тестирования в изолированной среде
+
+from .. import loader, utils
+import asyncio
+import random
+import logging
+from datetime import datetime
+
+logger = logging.getLogger(__name__)
+
+@loader.tds
+class AutoPosterModule(loader.Module):
+    """Модуль для автоматической отправки сообщений в чаты"""
+    
+    strings = {
+        "name": "AutoPoster",
+        "active": "✅ Автопостинг активирован",
+        "inactive": "⏹️ Автопостинг остановлен",
+        "starting": "🚀 Запуск автопостинга...",
+        "error": "❌ Ошибка при отправке"
+    }
+
+    def __init__(self):
+        self.is_running = False
+        self.task = None
+        self.message_count = 0
+        
+        # Целевые чаты
+        self.target_chats = [
+            "https://t.me/piteraq",
+            "https://t.me/vpiskavipspb",
+            "https://t.me/VpISkA991", 
+            "https://t.me/sextimeeeeeee",
+            "https://t.me/vpiski_ekat",
+            "https://t.me/tusovkimscspb",
+            "https://t.me/vpiski_spb_piter_znakomstva",
+            "https://t.me/vpiskimsksspb",
+            "https://t.me/chat_berdjansk",
+            "https://t.me/chatikiip",
+            "https://t.me/vpisk_moskova",
+            "https://t.me/moskva_vpiskip",
+            "https://t.me/Moskvavispka",
+            "https://t.me/vpiska_chelyaba001",
+            "https://t.me/vpiskaa_spb",
+            "https://t.me/vpiska_beseda"
+        ]
+        
+        # Сообщение для отправки
+        self.message_text = "Эскорт услуги у меня в профиле🤤 \nДевушки на любой вкус💌"
+
+    async def client_ready(self, client, db):
+        self.client = client
+        self.db = db
+        logger.info("Модуль AutoPoster инициализирован")
+
+    async def ap_startcmd(self, message):
+        """Запустить автопостинг: .ap_start"""
+        if self.is_running:
+            await utils.answer(message, "⚠️ Автопостинг уже запущен")
+            return
+            
+        self.is_running = True
+        await utils.answer(message, self.strings["starting"])
+        
+        # Запускаем фоновую задачу
+        self.task = asyncio.create_task(self.posting_loop())
+        await utils.answer(message, self.strings["active"])
+        
+        logger.info(f"Автопостинг запущен в {datetime.now()}")
+
+    async def ap_stopcmd(self, message):
+        """Остановить автопостинг: .ap_stop"""
+        if not self.is_running:
+            await utils.answer(message, "ℹ️ Автопостинг не запущен")
+            return
+            
+        self.is_running = False
+        if self.task:
+            self.task.cancel()
+            try:
+                await self.task
+            except asyncio.CancelledError:
+                pass
+                
+        await utils.answer(message, self.strings["inactive"])
+        logger.info(f"Автопостинг остановлен в {datetime.now()}")
+
+    async def ap_statscmd(self, message):
+        """Показать статистику: .ap_stats"""
+        stats = f"""
+📊 Статистика автопостинга:
+
+• Отправлено сообщений: {self.message_count}
+• Целевых чатов: {len(self.target_chats)}
+• Статус: {'🟢 Активен' if self.is_running else '🔴 Остановлен'}
+• Последнее обновление: {datetime.now().strftime('%H:%M:%S')}
+        """
+        await utils.answer(message, stats)
+
+    async def ap_testcmd(self, message):
+        """Тестовая отправка в 1 чат: .ap_test"""
+        try:
+            if not self.target_chats:
+                await utils.answer(message, "❌ Нет целевых чатов")
+                return
+                
+            test_chat = random.choice(self.target_chats)
+            
+            # Отправляем тестовое сообщение
+            await self.client.send_message(test_chat, self.message_text)
+            self.message_count += 1
+            
+            await utils.answer(message, f"✅ Тестовое сообщение отправлено в:\n{test_chat}")
+            logger.info(f"Тестовая отправка в {test_chat}")
+            
+        except Exception as e:
+            await utils.answer(message, f"{self.strings['error']}: {str(e)}")
+            logger.error(f"Ошибка тестовой отправки: {e}")
+
+    async def ap_listcmd(self, message):
+        """Показать список чатов: .ap_list"""
+        if not self.target_chats:
+            await utils.answer(message, "📭 Список чатов пуст")
+            return
+            
+        # Показываем первые 10 чатов
+        chat_list = "\n".join([f"{i+1}. {chat}" for i, chat in enumerate(self.target_chats[:10])])
+        
+        if len(self.target_chats) > 10:
+            chat_list += f"\n... и еще {len(self.target_chats) - 10} чатов"
+            
+        await utils.answer(message, f"📋 Список целевых чатов:\n{chat_list}")
+
+    async def posting_loop(self):
+        """Основной цикл отправки сообщений"""
+        while self.is_running:
+            try:
+                # Случайная задержка 5-7 минут (300-420 секунд)
+                delay = random.randint(300, 420)
+                logger.info(f"Ожидание {delay} секунд")
+                
+                await asyncio.sleep(delay)
+                
+                if not self.is_running:
+                    break
+                    
+                # Выбираем 3 случайных чата
+                if len(self.target_chats) >= 3:
+                    selected_chats = random.sample(self.target_chats, 3)
+                else:
+                    selected_chats = self.target_chats
+                    
+                # Отправляем сообщения в выбранные чаты
+                for chat in selected_chats:
+                    try:
+                        await self.client.send_message(chat, self.message_text)
+                        self.message_count += 1
+                        logger.info(f"Сообщение отправлено в {chat}")
+                        
+                        # Небольшая задержка между отправками
+                        await asyncio.sleep(random.uniform(1.0, 3.0))
+                        
+                    except Exception as e:
+                        logger.error(f"Ошибка отправки в {chat}: {e}")
+                        continue
+                        
+                logger.info(f"Цикл завершен. Всего отправок: {self.message_count}")
+                
+            except asyncio.CancelledError:
+                logger.info("Цикл отправки прерван")
+                break
+            except Exception as e:
+                logger.error(f"Ошибка в основном цикле: {e}")
+                await asyncio.sleep(60)  # Ждем минуту при ошибке
+
+    async def ap_helpcmd(self, message):
+        """Справка по командам: .ap_help"""
+        help_text = """
+🤖 МОДУЛЬ АВТОПОСТИНГА
+
+Команды:
+• .ap_start - запустить автопостинг
+• .ap_stop - остановить автопостинг
+• .ap_stats - показать статистику
+• .ap_test - тестовая отправка в 1 чат
+• .ap_list - показать список чатов
+• .ap_help - эта справка
+
+Настройки:
+• Интервал: 5-7 минут (случайный)
+• Количество чатов за цикл: 3
+• Сообщение: фиксированное
+
+⚠️ Внимание: Используйте только в образовательных целях
+        """
+        await utils.answer(message, help_text)
+
+    async def on_unload(self):
+        """Очистка при выгрузке модуля"""
+        self.is_running = False
+        if self.task:
+            self.task.cancel()
+        logger.info("Модуль AutoPoster выгружен")

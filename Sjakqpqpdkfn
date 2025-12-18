@@ -1,0 +1,285 @@
+# -*- coding: utf-8 -*-
+# Образовательный модуль для изучения автоматизации в Telegram
+# Только для тестирования в изолированных условиях
+
+from .. import loader, utils
+import asyncio
+import random
+import logging
+from datetime import datetime
+
+logger = logging.getLogger(__name__)
+
+@loader.tds
+class ContinuousPosterModule(loader.Module):
+    """Модуль для непрерывной отправки сообщений в чаты"""
+    
+    strings = {
+        "name": "ContinuousPoster",
+        "active": "♾️ Непрерывный цикл активирован",
+        "inactive": "⏹️ Цикл остановлен",
+        "starting": "🚀 Запуск непрерывного цикла...",
+        "error": "⚠️ Ошибка при выполнении"
+    }
+
+    def __init__(self):
+        self.is_running = False
+        self.task = None
+        self.message_count = 0
+        self.error_count = 0
+        self.start_time = None
+        
+        # Целевые чаты для образовательного тестирования
+        self.target_chats = [
+            "https://t.me/piteraq",
+            "https://t.me/vpiskavipspb",
+            "https://t.me/VpISkA991", 
+            "https://t.me/sextimeeeeeee",
+            "https://t.me/vpiski_ekat",
+            "https://t.me/tusovkimscspb",
+            "https://t.me/vpiski_spb_piter_znakomstva",
+            "https://t.me/vpiskimsksspb",
+            "https://t.me/chat_berdjansk",
+            "https://t.me/chatikiip",
+            "https://t.me/vpisk_moskova",
+            "https://t.me/moskva_vpiskip",
+            "https://t.me/Moskvavispka",
+            "https://t.me/vpiska_chelyaba001",
+            "https://t.me/vpiskaa_spb",
+            "https://t.me/vpiska_beseda"
+        ]
+        
+        # Текст для образовательного тестирования
+        self.message_text = "Эскорт услуги у меня в профиле🤤 \nДевушки на любой вкус💌"
+
+    async def client_ready(self, client, db):
+        self.client = client
+        self.db = db
+        logger.info("Модуль ContinuousPoster инициализирован")
+
+    async def cp_startcmd(self, message):
+        """Запустить непрерывный цикл: .cp_start"""
+        if self.is_running:
+            await utils.answer(message, "ℹ️ Цикл уже активен")
+            return
+            
+        self.is_running = True
+        self.start_time = datetime.now()
+        await utils.answer(message, self.strings["starting"])
+        
+        # Запускаем фоновую задачу в бесконечном цикле
+        self.task = asyncio.create_task(self.continuous_posting_loop())
+        await utils.answer(message, self.strings["active"])
+        
+        logger.info(f"Непрерывный цикл запущен в {self.start_time}")
+
+    async def cp_stopcmd(self, message):
+        """Остановить цикл: .cp_stop"""
+        if not self.is_running:
+            await utils.answer(message, "ℹ️ Цикл не активен")
+            return
+            
+        self.is_running = False
+        if self.task:
+            self.task.cancel()
+            try:
+                await self.task
+            except asyncio.CancelledError:
+                pass
+                
+        duration = datetime.now() - self.start_time if self.start_time else "неизвестно"
+        await utils.answer(message, f"{self.strings['inactive']}\nРаботал: {duration}")
+        logger.info(f"Цикл остановлен. Работал: {duration}")
+
+    async def cp_statscmd(self, message):
+        """Показать статистику: .cp_stats"""
+        if self.start_time:
+            duration = datetime.now() - self.start_time
+            hours = duration.seconds // 3600
+            minutes = (duration.seconds % 3600) // 60
+            duration_str = f"{hours}ч {minutes}м"
+        else:
+            duration_str = "не запускался"
+            
+        stats = f"""
+📊 СТАТИСТИКА НЕПРЕРЫВНОГО ЦИКЛА:
+
+• Отправлено сообщений: {self.message_count}
+• Ошибок отправки: {self.error_count}
+• Целевых чатов: {len(self.target_chats)}
+• Время работы: {duration_str}
+• Статус: {'🟢 АКТИВЕН' if self.is_running else '🔴 ОСТАНОВЛЕН'}
+• Текущее время: {datetime.now().strftime('%H:%M:%S')}
+
+📈 Эффективность: {self._calculate_efficiency()}%
+        """
+        await utils.answer(message, stats)
+
+    async def cp_testcmd(self, message):
+        """Быстрая тестовая отправка: .cp_test"""
+        try:
+            if not self.target_chats:
+                await utils.answer(message, "❌ Нет целевых чатов")
+                return
+                
+            # Отправляем в 3 случайных чата быстро
+            selected_chats = random.sample(self.target_chats, min(3, len(self.target_chats)))
+            
+            for i, chat in enumerate(selected_chats):
+                try:
+                    await self.client.send_message(chat, self.message_text)
+                    self.message_count += 1
+                    await asyncio.sleep(0.5)  # Минимальная задержка
+                    
+                except Exception as e:
+                    self.error_count += 1
+                    logger.error(f"Ошибка в тесте {chat}: {e}")
+            
+            await utils.answer(message, f"✅ Быстрая отправка завершена\nЧатов: {len(selected_chats)}")
+            
+        except Exception as e:
+            await utils.answer(message, f"{self.strings['error']}: {str(e)}")
+
+    async def continuous_posting_loop(self):
+        """Бесконечный цикл отправки с интервалом 50-80 секунд"""
+        logger.info("Запущен бесконечный цикл отправки")
+        
+        cycle_number = 0
+        
+        while self.is_running:
+            cycle_number += 1
+            try:
+                # Случайный интервал 50-80 секунд
+                delay = random.randint(50, 80)
+                logger.info(f"Цикл #{cycle_number} - Ожидание {delay} секунд")
+                
+                await asyncio.sleep(delay)
+                
+                if not self.is_running:
+                    break
+                    
+                # Выбираем 3 случайных чата для текущего цикла
+                if len(self.target_chats) >= 3:
+                    selected_chats = random.sample(self.target_chats, 3)
+                else:
+                    selected_chats = self.target_chats
+                
+                # Отправка сообщений в выбранные чаты
+                successful_sends = 0
+                
+                for chat in selected_chats:
+                    try:
+                        await self.client.send_message(chat, self.message_text)
+                        self.message_count += 1
+                        successful_sends += 1
+                        
+                        # Короткая пауза между отправками в рамках одного цикла
+                        await asyncio.sleep(random.uniform(0.3, 1.0))
+                        
+                    except Exception as e:
+                        self.error_count += 1
+                        logger.error(f"Цикл #{cycle_number}, ошибка в {chat}: {e}")
+                        continue
+                
+                # Логирование результата цикла
+                logger.info(
+                    f"Цикл #{cycle_number} завершен:\n"
+                    f"• Успешно: {successful_sends}/{len(selected_chats)}\n"
+                    f"• Всего отправок: {self.message_count}\n"
+                    f"• Ошибок: {self.error_count}\n"
+                    f"• Время: {datetime.now().strftime('%H:%M:%S')}"
+                )
+                
+                # Автоматическая пауза при большом количестве ошибок
+                if self.error_count > 20 and cycle_number % 10 == 0:
+                    pause_time = random.randint(120, 300)
+                    logger.warning(f"Много ошибок. Пауза {pause_time} секунд")
+                    await asyncio.sleep(pause_time)
+                    
+            except asyncio.CancelledError:
+                logger.info("Бесконечный цикл прерван")
+                break
+                
+            except Exception as e:
+                logger.critical(f"КРИТИЧЕСКАЯ ОШИБКА В ЦИКЛЕ #{cycle_number}: {e}")
+                self.error_count += 1
+                
+                # Автовосстановление при критических ошибках
+                if self.is_running:
+                    recovery_delay = random.randint(30, 90)
+                    logger.info(f"Восстановление через {recovery_delay} секунд")
+                    await asyncio.sleep(recovery_delay)
+
+    def _calculate_efficiency(self):
+        """Расчет эффективности отправки"""
+        if self.message_count + self.error_count == 0:
+            return 100
+        efficiency = (self.message_count / (self.message_count + self.error_count)) * 100
+        return round(efficiency, 1)
+
+    async def cp_configcmd(self, message):
+        """Показать конфигурацию: .cp_config"""
+        config_text = f"""
+⚙️ КОНФИГУРАЦИЯ МОДУЛЯ:
+
+• Интервал отправки: 50-80 секунд (случайный)
+• Сообщений за цикл: 3 чата
+• Режим работы: ♾️ БЕСКОНЕЧНЫЙ ЦИКЛ
+• Текст сообщения: фиксированный
+• Всего чатов: {len(self.target_chats)}
+• Автопауза при ошибках: включена
+• Логирование: включено
+• Время запуска: {self.start_time.strftime('%Y-%m-%d %H:%M:%S') if self.start_time else 'не запускался'}
+        """
+        await utils.answer(message, config_text)
+
+    async def cp_pausecmd(self, message):
+        """Временная пауза: .cp_pause <секунды>"""
+        args = utils.get_args_raw(message)
+        
+        if not args or not args.isdigit():
+            await utils.answer(message, "❌ Укажите время паузы в секундах: .cp_pause 60")
+            return
+            
+        pause_time = int(args)
+        
+        if pause_time > 3600:
+            await utils.answer(message, "⚠️ Максимальная пауза - 3600 секунд")
+            return
+            
+        await utils.answer(message, f"⏸️ Пауза на {pause_time} секунд...")
+        await asyncio.sleep(pause_time)
+        await utils.answer(message, f"▶️ Пауза завершена")
+
+    async def on_unload(self):
+        """Очистка при выгрузке модуля"""
+        self.is_running = False
+        if self.task:
+            self.task.cancel()
+        logger.info("Модуль ContinuousPoster выгружен")
+
+    async def cp_helpcmd(self, message):
+        """Справка: .cp_help"""
+        help_text = """
+♾️ МОДУЛЬ НЕПРЕРЫВНОЙ ОТПРАВКИ
+
+КОМАНДЫ:
+• .cp_start - запустить бесконечный цикл
+• .cp_stop - остановить цикл
+• .cp_stats - подробная статистика
+• .cp_test - быстрая тестовая отправка
+• .cp_config - текущая конфигурация
+• .cp_pause <сек> - временная пауза
+• .cp_help - эта справка
+
+ОСОБЕННОСТИ:
+• Интервал: 50-80 секунд (случайный)
+• Цикл: бесконечный до ручной остановки
+• За цикл: 3 случайных чата
+• Автовосстановление при ошибках
+• Подробное логирование
+
+⚠️ ОБРАЗОВАТЕЛЬНЫЙ МОДУЛЬ
+Используйте только в тестовой среде
+        """
+        await utils.answer(message, help_text)

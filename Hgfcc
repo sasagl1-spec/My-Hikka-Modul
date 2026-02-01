@@ -1,0 +1,181 @@
+# meta developer: @your_username
+# meta pic: https://img.icons8.com/color/48/000000/advertisement.png
+# meta license: MIT
+
+import asyncio
+import time
+from datetime import datetime
+from telethon.tl.types import Message
+
+from .. import loader, utils
+
+@loader.tds
+class TonTakeAdvertiserMod(loader.Module):
+    """Модуль для автоматической рекламы в TonTakeGarant каждые 47 сообщений"""
+    
+    strings = {
+        "name": "TonTakeAdvertiser",
+        "on": "✅ <b>Отслеживание активировано</b>",
+        "off": "❌ <b>Отслеживание остановлено</b>",
+        "stats": (
+            "📊 <b>Статистика TonTakeAdvertiser:</b>\n"
+            "Всего отправок: {}\n"
+            "Последняя отправка: {}\n"
+            "Отсчитано сообщений: {}/47\n"
+            "Статус: {}"
+        ),
+        "ad_sent": "✅ <b>Реклама отправлена в TonTakeGarant</b>",
+        "counter_reset": "🔄 <b>Счётчик сброшен на 0</b>"
+    }
+
+    def __init__(self):
+        self.config = loader.ModuleConfig(
+            loader.ConfigValue(
+                "target_channel",
+                "https://t.me/TonTakeGarant",
+                "Канал для отправки рекламы",
+                validator=loader.validators.String()
+            ),
+            loader.ConfigValue(
+                "trigger_count",
+                47,
+                "Сообщений до отправки рекламы",
+                validator=loader.validators.Integer(minimum=1, maximum=1000)
+            ),
+            loader.ConfigValue(
+                "ad_text",
+                """🎯 НАКРУТКА ДЛЯ ВСЕХ ПЛАТФОРМ:
+— Telegram, TikTok, ВКонтакте, Facebook, Instagram
+Услуги: просмотры, реакции, подписчики, репосты, рефералы.
+
+🇺🇸 ПРОДАМ АККАУНТЫ США (старые):
+• 2015 — 950₽
+• 2016 — 750₽
+• 2017 — 520₽
+• 2018 — 450₽
+
+💵 Оплату принимаю в ₽/Крипте/$""",
+                "Текст рекламного сообщения",
+                validator=loader.validators.String()
+            )
+        )
+        
+        self.message_count = 0
+        self.total_sent = 0
+        self.last_sent = "Никогда"
+        self.running = True
+
+    async def client_ready(self, client, db):
+        """Инициализация при готовности клиента"""
+        self.client = client
+        self.db = db
+        self._me = await client.get_me()
+
+    async def watcher(self, message: Message):
+        """Счетчик сообщений в целевом канале"""
+        if not self.running:
+            return
+            
+        try:
+            # Получаем информацию о чате
+            chat = await message.get_chat()
+            if not chat:
+                return
+                
+            # Проверяем, что сообщение из нужного канала
+            chat_link = f"https://t.me/{chat.username}" if chat.username else f"https://t.me/c/{chat.id}"
+            target_link = self.config["target_channel"].replace("@", "https://t.me/")
+            
+            if chat_link == target_link or f"@{chat.username}" == self.config["target_channel"]:
+                self.message_count += 1
+                
+                # Проверка на достижение лимита
+                if self.message_count >= self.config["trigger_count"]:
+                    await self.send_advertisement()
+                    self.message_count = 0
+                    
+        except Exception as e:
+            print(f"[TonTakeAdvertiser] Ошибка: {e}")
+
+    async def send_advertisement(self):
+        """Отправка рекламного сообщения"""
+        try:
+            # Отправляем сообщение
+            await self.client.send_message(
+                self.config["target_channel"],
+                self.config["ad_text"]
+            )
+            
+            # Обновляем статистику
+            self.total_sent += 1
+            self.last_sent = datetime.now().strftime("%H:%M:%S")
+            
+            print(f"[TonTakeAdvertiser] Реклама отправлена. Всего: {self.total_sent}")
+            
+        except Exception as e:
+            print(f"[TonTakeAdvertiser] Ошибка отправки: {e}")
+
+    @loader.command()
+    async def ttonstart(self, message):
+        """Включить отслеживание и отправку рекламы"""
+        self.running = True
+        await utils.answer(message, self.strings("on"))
+
+    @loader.command()
+    async def ttonstop(self, message):
+        """Выключить отслеживание"""
+        self.running = False
+        await utils.answer(message, self.strings("off"))
+
+    @loader.command()
+    async def ttonstats(self, message):
+        """Показать статистику модуля"""
+        status = "✅ Активен" if self.running else "❌ Остановлен"
+        
+        stats_text = self.strings("stats").format(
+            self.total_sent,
+            self.last_sent,
+            self.message_count,
+            status
+        )
+        
+        await utils.answer(message, stats_text)
+
+    @loader.command()
+    async def ttonreset(self, message):
+        """Сбросить счётчик сообщений"""
+        self.message_count = 0
+        await utils.answer(message, self.strings("counter_reset"))
+
+    @loader.command()
+    async def ttonsend(self, message):
+        """Принудительно отправить рекламу сейчас"""
+        await self.send_advertisement()
+        await utils.answer(message, self.strings("ad_sent"))
+
+    @loader.command()
+    async def ttonconfig(self, message):
+        """Показать текущие настройки"""
+        config_text = (
+            f"⚙️ <b>Настройки TonTakeAdvertiser:</b>\n"
+            f"• Канал: {self.config['target_channel']}\n"
+            f"• Триггер: каждые {self.config['trigger_count']} сообщений\n"
+            f"• Статус: {'Включено' if self.running else 'Выключено'}\n\n"
+            f"<code>Используйте .cfg TonTakeAdvertiser для изменения настроек</code>"
+        )
+        await utils.answer(message, config_text)
+
+    @loader.command()
+    async def ttonhelp(self, message):
+        """Показать справку по командам"""
+        help_text = (
+            "📖 <b>Команды TonTakeAdvertiser:</b>\n"
+            "<code>.ttonstart</code> - Включить модуль\n"
+            "<code>.ttonstop</code> - Выключить модуль\n"
+            "<code>.ttonstats</code> - Статистика\n"
+            "<code>.ttonreset</code> - Сбросить счётчик\n"
+            "<code>.ttonsend</code> - Отправить сейчас\n"
+            "<code>.ttonconfig</code> - Показать настройки\n"
+            "<code>.ttonhelp</code> - Эта справка"
+        )
+        await utils.answer(message, help_text)
